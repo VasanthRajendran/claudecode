@@ -1,7 +1,7 @@
 import { createInterface } from "readline/promises";
 import { stdin as input, stdout as output } from "process";
 import { writeFileSync } from "fs";
-import { generatePlan, fixPlan, type PlanInputs } from "./llm.js";
+import { generatePlan, fixPlan, type PlanInputs } from "./planner.js";
 import { validatePlan, type LearningPlan } from "./schema.js";
 
 // ── CLI helpers ───────────────────────────────────────────────────────────────
@@ -50,15 +50,6 @@ function printPlan(plan: LearningPlan): void {
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
-  // Guard: API key
-  if (!process.env.ANTHROPIC_API_KEY) {
-    console.error(
-      "Error: ANTHROPIC_API_KEY environment variable is not set.\n" +
-        "Get your key at https://console.anthropic.com"
-    );
-    process.exit(1);
-  }
-
   const rl = createInterface({ input, output });
 
   console.log("\n" + "═".repeat(62));
@@ -88,11 +79,13 @@ async function main(): Promise<void> {
   };
 
   // ── First attempt ────────────────────────────────────────────────
+  console.log("\nGenerating your learning plan…");
+
   let result: { plan: LearningPlan; rawJson: string } | null = null;
   let firstErrors: string[] = [];
 
   try {
-    result = await generatePlan(inputs);
+    result = generatePlan(inputs);
     const validationErrors = validatePlan(result.plan);
     if (validationErrors.length > 0) {
       firstErrors = validationErrors.map((e) => e.message);
@@ -105,10 +98,10 @@ async function main(): Promise<void> {
   if (firstErrors.length > 0) {
     console.log("\n⚠️  Issues with first attempt:");
     firstErrors.forEach((e) => console.log(`   • ${e}`));
-    console.log("\nAsking Claude to fix the plan…");
+    console.log("\nRetrying with corrected logic…");
 
     try {
-      result = await fixPlan(inputs, firstErrors, result?.rawJson);
+      result = fixPlan(inputs, firstErrors);
 
       const remainingErrors = validatePlan(result.plan);
       if (remainingErrors.length > 0) {
@@ -120,18 +113,11 @@ async function main(): Promise<void> {
       }
     } catch (retryErr) {
       if (!result) {
-        // Neither attempt produced parseable output
-        console.error(
-          "\n❌ Could not generate a valid plan after two attempts."
-        );
-        console.error(
-          retryErr instanceof Error ? retryErr.message : retryErr
-        );
+        console.error("\n❌ Could not generate a valid plan after two attempts.");
+        console.error(retryErr instanceof Error ? retryErr.message : retryErr);
         process.exit(1);
       }
-      console.log(
-        "\n⚠️  Retry failed. Saving original plan (may have minor issues)."
-      );
+      console.log("\n⚠️  Retry failed. Saving original plan (may have minor issues).");
     }
   } else if (result) {
     console.log("✅ Plan validated!");
